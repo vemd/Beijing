@@ -2377,7 +2377,7 @@
                 'dashboard': renderDashboard,
                 'notifications': renderNotifications,
                 'accounts': renderAccounts,
-                'transactions': renderTransactions,
+                'transactions': () => { populateFilters(); renderTransactions(); },
                 'budgets': renderBudgets,
                 'goals': renderGoals,
                 'analysis': renderAnalysis,
@@ -2719,10 +2719,13 @@
         const filterCategory = document.getElementById('filter-category');
         const filterAccount = document.getElementById('filter-account');
 
-        [searchInput, filterType, filterCategory, filterAccount].forEach(el => {
-            el.addEventListener('input', renderTransactions);
-            el.addEventListener('change', renderTransactions);
+        searchInput.addEventListener('input', renderTransactions);
+        filterType.addEventListener('change', () => {
+            populateFilters();
+            renderTransactions();
         });
+        filterCategory.addEventListener('change', renderTransactions);
+        filterAccount.addEventListener('change', renderTransactions);
 
         function populateFilters() {
             const data = getUserData();
@@ -2731,10 +2734,19 @@
             const currentCat = filterCategory.value;
             const currentAcc = filterAccount.value;
             
-            // Category Filter (All categories combined)
-            const allCats = new Set([...data.categories.receita, ...data.categories.despesa]);
+            // Category Filter dinâmico (mostra categorias com base no tipo selecionado)
+            const selectedType = filterType.value;
+            let catArray = [];
+            if (selectedType === 'receita') {
+                catArray = data.categories.receita;
+            } else if (selectedType === 'despesa') {
+                catArray = data.categories.despesa;
+            } else {
+                catArray = [...data.categories.receita, ...data.categories.despesa];
+            }
+            
             filterCategory.innerHTML = '<option value="all">Todas as Categorias</option>';
-            allCats.forEach(cat => {
+            catArray.forEach(cat => {
                 filterCategory.innerHTML += `<option value="${cat}">${cat}</option>`;
             });
 
@@ -2744,14 +2756,22 @@
                 filterAccount.innerHTML += `<option value="${acc.id}">${acc.name}</option>`;
             });
             
-            // Restaura as opções selecionadas pelo utilizador para que o filtro funcione
-            if (currentCat) filterCategory.value = currentCat;
-            if (currentAcc) filterAccount.value = currentAcc;
+            // Restaura as opções selecionadas se elas ainda existirem na nova lista
+            if (currentCat && filterCategory.querySelector(`option[value="${currentCat}"]`)) {
+                filterCategory.value = currentCat;
+            } else {
+                filterCategory.value = 'all';
+            }
+            
+            if (currentAcc && filterAccount.querySelector(`option[value="${currentAcc}"]`)) {
+                filterAccount.value = currentAcc;
+            } else {
+                filterAccount.value = 'all';
+            }
         }
 
         function renderTransactions() {
             const data = getUserData();
-            if(state.currentView === 'transactions') populateFilters();
 
             const list = document.getElementById('full-transactions-list');
             if(!list) return;
@@ -3779,22 +3799,46 @@
             const data = getUserData();
             let transactionsToExport = data.transactions;
 
+            // 1. Aplicar filtro de Data (se selecionado)
             if (startDate && endDate) {
                 const start = parseLocalDate(startDate);
                 start.setHours(0, 0, 0, 0);
                 const end = parseLocalDate(endDate);
                 end.setHours(23, 59, 59, 999);
                 
-                transactionsToExport = data.transactions.filter(t => {
+                transactionsToExport = transactionsToExport.filter(t => {
                     const tDate = parseLocalDate(t.date);
                     return tDate >= start && tDate <= end;
                 });
             }
 
+            // 2. Aplicar os filtros ativos no ecrã (Pesquisa, Tipo, Categoria, Conta)
+            const searchTerm = searchInput.value.toLowerCase();
+            if (searchTerm) {
+                transactionsToExport = transactionsToExport.filter(t => 
+                    (t.description || '').toLowerCase().includes(searchTerm) ||
+                    t.category.toLowerCase().includes(searchTerm)
+                );
+            }
+
+            if (filterType.value !== 'all') {
+                transactionsToExport = transactionsToExport.filter(t => t.type === filterType.value);
+            }
+
+            if (filterCategory.value !== 'all') {
+                transactionsToExport = transactionsToExport.filter(t => t.category === filterCategory.value);
+            }
+
+            if (filterAccount.value !== 'all') {
+                transactionsToExport = transactionsToExport.filter(t => t.accountId == filterAccount.value);
+            }
+
+            // 3. Calcular totais com base na lista filtrada
             const incomes = transactionsToExport.filter(t => t.type === 'receita');
             const expenses = transactionsToExport.filter(t => t.type === 'despesa');
             const totalIncome = incomes.reduce((sum, t) => sum + t.amount, 0);
             const totalExpense = expenses.reduce((sum, t) => sum + t.amount, 0);
+            
             return { data, incomes, expenses, totalIncome, totalExpense, transactionsToExport };
         }
         
