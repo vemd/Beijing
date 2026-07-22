@@ -710,6 +710,24 @@
         .card-actions button.edit-btn:hover { color: var(--primary-color); background: var(--primary-light); }
         .card-actions button.delete-btn:hover { color: var(--danger-color); background: var(--danger-light); }
         .card-actions button.contribute-btn:hover { color: var(--success-color); background: var(--success-light); }
+        .card-actions button.move-up-btn:hover, .card-actions button.move-down-btn:hover { color: var(--primary-color); background: var(--primary-light); }
+        
+        /* Estilos Drag and Drop para Contas */
+        .account-card[draggable="true"] {
+            cursor: grab;
+        }
+        .account-card[draggable="true"]:active {
+            cursor: grabbing;
+        }
+        .account-card.dragging {
+            opacity: 0.5;
+            border: 2px dashed var(--primary-color);
+            transform: scale(0.98);
+        }
+        .account-card.drag-over {
+            border: 2px solid var(--primary-color);
+            transform: scale(1.02);
+        }
         
         /* Progress Bar */
         .progress-bar-container {
@@ -2251,13 +2269,13 @@
                 localStorage.setItem('beijing_logged_in', email);
                 initApp();
             } else {
-                alert('Email ou palavra-passe incorretos.');
+                showToast('Email ou palavra-passe incorretos.', 'error');
             }
         }
 
         function handleRegister(name, email, password) {
             if (state.users[email]) {
-                alert('Este email já está registado.');
+                showToast('Este email já está registado.', 'error');
                 return;
             }
             state.users[email] = {
@@ -2304,7 +2322,7 @@
             const email = document.getElementById('register-email').value;
             const password = document.getElementById('register-password').value;
             if (password.length < 8 || !/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
-                alert('A palavra-passe deve ter no mínimo 8 caracteres, incluindo letras e números.');
+                showToast('A palavra-passe deve ter no mín. 8 caracteres (letras e números).', 'error');
                 return;
             }
             handleRegister(name, email, password);
@@ -2652,14 +2670,19 @@
                 grid.innerHTML = '<p style="grid-column: 1 / -1; text-align:center; color: var(--light-text-muted);">Nenhuma conta adicionada. Crie a sua primeira conta!</p>';
                 return;
             }
-            data.accounts.forEach(acc => {
+            data.accounts.forEach((acc, index) => {
                 grid.innerHTML += `
-                    <div class="card account-card">
+                    <div class="card account-card" data-id="${acc.id}" draggable="true">
                         <div class="card-actions">
-                            <button class="edit-btn" data-id="${acc.id}" data-type="account"><i class="fas fa-edit"></i></button>
-                            <button class="delete-btn" data-id="${acc.id}" data-type="account"><i class="fas fa-trash"></i></button>
+                            ${index > 0 ? `<button class="move-up-btn" data-id="${acc.id}" data-type="account" title="Mover para a Esquerda"><i class="fas fa-chevron-left"></i></button>` : ''}
+                            ${index < data.accounts.length - 1 ? `<button class="move-down-btn" data-id="${acc.id}" data-type="account" title="Mover para a Direita"><i class="fas fa-chevron-right"></i></button>` : ''}
+                            <button class="edit-btn" data-id="${acc.id}" data-type="account" title="Editar"><i class="fas fa-edit"></i></button>
+                            <button class="delete-btn" data-id="${acc.id}" data-type="account" title="Apagar"><i class="fas fa-trash"></i></button>
                         </div>
-                        <h3>${acc.name}</h3>
+                        <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                            <i class="fas fa-grip-vertical" style="color: var(--light-text-muted); margin-right: 12px; font-size: 1.1rem;" title="Arraste para reordenar"></i>
+                            <h3 style="margin: 0;">${acc.name}</h3>
+                        </div>
                         <p class="amount">${formatCurrency(acc.balance)}</p>
                     </div>
                 `;
@@ -3131,50 +3154,61 @@
         });
 
         // Transfer Logic
+        // Ocultado fora do click-listener para prevenir a duplicação de eventos (bug de seleção)
+        document.getElementById('transfer-from').addEventListener('change', (e) => {
+             populateAccountSelect('transfer-to', parseFloat(e.target.value));
+        });
+
         document.getElementById('transfer-btn').addEventListener('click', () => {
+            document.getElementById('transfer-form').reset();
             const fromSelect = document.getElementById('transfer-from');
-            const toSelect = document.getElementById('transfer-to');
             
             populateAccountSelect('transfer-from');
-            populateAccountSelect('transfer-to', parseInt(fromSelect.value));
+            if (fromSelect.options.length > 0) {
+                populateAccountSelect('transfer-to', parseFloat(fromSelect.options[0].value));
+            }
 
-            fromSelect.addEventListener('change', () => {
-                 populateAccountSelect('transfer-to', parseInt(fromSelect.value));
-            });
-
-            document.getElementById('transfer-form').reset();
             showModal('transfer-modal');
         });
 
         document.getElementById('transfer-form').addEventListener('submit', e => {
             e.preventDefault();
             const data = getUserData();
-            const fromId = parseInt(document.getElementById('transfer-from').value);
-            const toId = parseInt(document.getElementById('transfer-to').value);
+            const fromId = parseFloat(document.getElementById('transfer-from').value);
+            const toId = parseFloat(document.getElementById('transfer-to').value);
             const amount = parseFloat(document.getElementById('transfer-amount').value);
 
+            if (amount <= 0 || isNaN(amount)) {
+                showToast('O valor a transferir deve ser maior que zero.', 'error');
+                return;
+            }
+
             if (fromId === toId) {
-                alert('A conta de origem e destino não podem ser a mesma.');
+                showToast('A conta de origem e destino não podem ser a mesma.', 'error');
                 return;
             }
 
             const fromAccount = data.accounts.find(a => a.id === fromId);
             const toAccount = data.accounts.find(a => a.id === toId);
 
-            if (fromAccount.balance < amount) {
-                alert('Saldo insuficiente na conta de origem.');
+            // Resolução do erro de precisão decimal (multiplicamos por 100 para comparar inteiros)
+            const fromBalance = Math.round(fromAccount.balance * 100);
+            const transferAmount = Math.round(amount * 100);
+
+            if (fromBalance < transferAmount) {
+                showToast('Saldo insuficiente na conta de origem.', 'error');
                 return;
             }
 
-            fromAccount.balance -= amount;
-            toAccount.balance += amount;
+            // Subtração e Adição matematicamente seguras
+            fromAccount.balance = (fromBalance - transferAmount) / 100;
+            toAccount.balance = (Math.round(toAccount.balance * 100) + transferAmount) / 100;
 
             saveDataToStorage();
             updateUI();
             hideAllModals();
             showToast('Transferência realizada com sucesso!');
         });
-
 
         // Transaction CRUD
         document.getElementById('transaction-is-recurring').addEventListener('change', (e) => {
@@ -3250,7 +3284,7 @@
                     }
                     category = newCategory;
                 } else {
-                    alert('Por favor, insira um nome para a nova categoria.');
+                    showToast('Por favor, insira um nome para a nova categoria.', 'error');
                     return;
                 }
             }
@@ -3362,7 +3396,7 @@
                     }
                     category = newCategory;
                 } else {
-                    alert('Por favor, insira um nome para a nova categoria de orçamento.');
+                    showToast('Por favor, insira um nome para a nova categoria de orçamento.', 'error');
                     return;
                 }
             }
@@ -3371,7 +3405,7 @@
                 const customPeriodInput = document.getElementById('budget-custom-period');
                 customPeriodDays = parseInt(customPeriodInput.value);
                 if (!customPeriodDays || customPeriodDays <= 0) {
-                    alert('Por favor, insira um número de dias válido para o período personalizado.');
+                    showToast('Por favor, insira um número de dias válido.', 'error');
                     return;
                 }
             }
@@ -3413,8 +3447,9 @@
             let totalBalance = data.accounts.reduce((sum, acc) => sum + acc.balance, 0);
             let totalCurrentlySaved = data.goals.reduce((sum, goal) => goal.id !== state.editingId ? sum + goal.saved : sum, 0);
             
-            if (totalCurrentlySaved + saved > totalBalance) {
-                alert('Não pode alocar mais dinheiro às metas do que o saldo total das suas contas.');
+            // Resolução de precisão decimal também para as metas
+            if (Math.round((totalCurrentlySaved + saved) * 100) > Math.round(totalBalance * 100)) {
+                showToast('Não pode alocar mais dinheiro às metas do que o saldo total.', 'error');
                 return;
             }
 
@@ -3450,13 +3485,19 @@
             let totalSaved = data.goals.reduce((sum, g) => sum + g.saved, 0);
             let availableBalance = totalBalance - totalSaved;
 
-            if (amount > availableBalance) {
-                 alert('Não pode poupar mais do que o seu saldo disponível (Saldo Total - Total Poupado).');
+            if (amount <= 0 || isNaN(amount)) {
+                 showToast('O valor de reforço deve ser maior que zero.', 'error');
+                 return;
+            }
+
+            // Resolução de precisão decimal
+            if (Math.round(amount * 100) > Math.round(availableBalance * 100)) {
+                 showToast('Não pode poupar mais do que o seu saldo disponível.', 'error');
                  return;
             }
 
             // Add to goal without creating a transaction
-            goal.saved += amount;
+            goal.saved = (Math.round(goal.saved * 100) + Math.round(amount * 100)) / 100;
             if (!goal.contributions) goal.contributions = [];
             goal.contributions.push({ date: getTodayDate(), amount: amount });
             
@@ -3575,21 +3616,46 @@
 
         // --- EDIT AND DELETE HANDLING (Event Delegation) ---
         mainContent.addEventListener('click', (e) => {
-            const target = e.target.closest('.edit-btn, .delete-btn, .contribute-btn');
+            const target = e.target.closest('.edit-btn, .delete-btn, .contribute-btn, .move-up-btn, .move-down-btn');
             if (!target) return;
             
             const id = parseFloat(target.dataset.id);
             const type = target.dataset.type;
-            state.editingId = id;
 
             if (target.classList.contains('edit-btn')) {
+                state.editingId = id;
                 handleEdit(id, type);
             } else if (target.classList.contains('delete-btn')) {
+                state.editingId = id;
                 handleDelete(id, type);
             } else if (target.classList.contains('contribute-btn')) {
+                state.editingId = id;
                 handleContribute(id, type);
+            } else if (target.classList.contains('move-up-btn')) {
+                handleMove(id, type, -1);
+            } else if (target.classList.contains('move-down-btn')) {
+                handleMove(id, type, 1);
             }
         });
+
+        function handleMove(id, type, direction) {
+            const data = getUserData();
+            const array = data[type + 's']; 
+            const index = array.findIndex(item => item.id === id);
+            
+            if (index > -1) {
+                const newIndex = index + direction;
+                if (newIndex >= 0 && newIndex < array.length) {
+                    // Troca de posição
+                    const temp = array[index];
+                    array[index] = array[newIndex];
+                    array[newIndex] = temp;
+                    
+                    saveDataToStorage();
+                    updateUI();
+                }
+            }
+        }
 
         function handleEdit(id, type) {
             const data = getUserData();
@@ -3737,17 +3803,17 @@
             const endDate = document.getElementById('export-end-date').value;
 
             if ((startDate && !endDate) || (!startDate && endDate)) {
-                alert('Por favor, selecione uma data de início e de fim, ou deixe ambos os campos em branco para exportar tudo.');
+                showToast('Selecione uma data de início e de fim, ou limpe ambas.', 'error');
                 return;
             }
             if (startDate && endDate && parseLocalDate(startDate) > parseLocalDate(endDate)) {
-                alert('A data de início não pode ser posterior à data de fim.');
+                showToast('A data de início não pode ser posterior à data de fim.', 'error');
                 return;
             }
 
             const { transactionsToExport } = getReportData(startDate, endDate);
             if (transactionsToExport.length === 0) {
-                alert('Nenhuma transação para exportar no período selecionado.');
+                showToast('Nenhuma transação para exportar no período selecionado.', 'error');
                 return;
             }
 
@@ -3966,6 +4032,68 @@
                     }, 500);
                 }
             }
+        });
+
+
+        // --- DRAG AND DROP - CONTAS ---
+        const accountsGrid = document.getElementById('accounts-grid');
+        let draggedAccountId = null;
+
+        accountsGrid.addEventListener('dragstart', (e) => {
+            const card = e.target.closest('.account-card');
+            if (card) {
+                draggedAccountId = parseFloat(card.dataset.id);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', card.dataset.id);
+                setTimeout(() => card.classList.add('dragging'), 0);
+            }
+        });
+
+        accountsGrid.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Permite largar o item
+            const targetCard = e.target.closest('.account-card');
+            if (targetCard && parseFloat(targetCard.dataset.id) !== draggedAccountId) {
+                targetCard.classList.add('drag-over');
+            }
+        });
+
+        accountsGrid.addEventListener('dragleave', (e) => {
+            const targetCard = e.target.closest('.account-card');
+            if (targetCard) {
+                targetCard.classList.remove('drag-over');
+            }
+        });
+
+        accountsGrid.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const targetCard = e.target.closest('.account-card');
+            if (targetCard && draggedAccountId) {
+                targetCard.classList.remove('drag-over');
+                const targetId = parseFloat(targetCard.dataset.id);
+                
+                if (targetId !== draggedAccountId) {
+                    const data = getUserData();
+                    const oldIndex = data.accounts.findIndex(a => a.id === draggedAccountId);
+                    const newIndex = data.accounts.findIndex(a => a.id === targetId);
+                    
+                    if (oldIndex !== -1 && newIndex !== -1) {
+                        const [movedItem] = data.accounts.splice(oldIndex, 1);
+                        data.accounts.splice(newIndex, 0, movedItem);
+                        saveDataToStorage();
+                        renderAccounts();
+                        showToast('Ordem das contas atualizada!');
+                    }
+                }
+            }
+        });
+
+        accountsGrid.addEventListener('dragend', (e) => {
+            const card = e.target.closest('.account-card');
+            if (card) {
+                card.classList.remove('dragging');
+            }
+            draggedAccountId = null;
+            document.querySelectorAll('.account-card').forEach(c => c.classList.remove('drag-over'));
         });
 
 
