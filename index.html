@@ -1570,6 +1570,12 @@
                     <h2>Meu Orçamento</h2>
                     <button class="btn btn-primary" id="add-budget-btn"><i class="fas fa-plus"></i> <span>Criar Orçamento</span></button>
                 </div>
+                <div class="month-navigator-container" style="display: flex; justify-content: center; align-items: center; margin-bottom: 24px; gap: 15px;">
+                    <button class="btn btn-secondary" id="budget-prev-month" style="padding: 8px 12px;"><i class="fas fa-chevron-left"></i></button>
+                    <span id="budget-month-display" style="font-weight: 600; font-size: 1.1rem; min-width: 150px; text-align: center;">Mês Atual</span>
+                    <button class="btn btn-secondary" id="budget-next-month" style="padding: 8px 12px;"><i class="fas fa-chevron-right"></i></button>
+                    <button class="btn btn-primary" id="budget-reset-month" style="padding: 8px 12px;" title="Voltar ao Mês Atual"><i class="fas fa-calendar-day"></i> Hoje</button>
+                </div>
                 <div id="budgets-grid" class="item-grid">
                     <!-- Populated by JS -->
                 </div>
@@ -1591,14 +1597,20 @@
                 <div class="page-header">
                     <h2>Análise Financeira</h2>
                 </div>
+                <div class="month-navigator-container" style="display: flex; justify-content: center; align-items: center; margin-bottom: 24px; gap: 15px;">
+                    <button class="btn btn-secondary" id="analysis-prev-month" style="padding: 8px 12px;"><i class="fas fa-chevron-left"></i></button>
+                    <span id="analysis-month-display" style="font-weight: 600; font-size: 1.1rem; min-width: 150px; text-align: center;">Mês Atual</span>
+                    <button class="btn btn-secondary" id="analysis-next-month" style="padding: 8px 12px;"><i class="fas fa-chevron-right"></i></button>
+                    <button class="btn btn-primary" id="analysis-reset-month" style="padding: 8px 12px;" title="Voltar ao Mês Atual"><i class="fas fa-calendar-day"></i> Hoje</button>
+                </div>
                 <div class="dashboard-grid">
                     <div class="card">
-                        <h3>Despesas por Categoria (Mês)</h3>
+                        <h3>Despesas por Categoria</h3>
                         <p style="font-size: 0.85rem; color: var(--light-text-muted); margin-top: -5px; margin-bottom: 15px;">Clique numa fatia para ver detalhes</p>
                         <canvas id="expenses-by-category-chart"></canvas>
                     </div>
                     <div class="card">
-                        <h3>Receitas por Categoria (Mês)</h3>
+                        <h3>Receitas por Categoria</h3>
                         <p style="font-size: 0.85rem; color: var(--light-text-muted); margin-top: -5px; margin-bottom: 15px;">Clique numa fatia para ver detalhes</p>
                         <canvas id="income-by-category-chart"></canvas>
                     </div>
@@ -1940,6 +1952,8 @@
             editingId: null,
             deleteHandler: null,
             isDiscreetMode: localStorage.getItem('beijing_discreet') === 'true',
+            budgetMonthOffset: 0,
+            analysisMonthOffset: 0,
         };
 
         const defaultCategories = {
@@ -1995,6 +2009,14 @@
             let formatted = parts.join(',');
             
             return `${formatted} ${symbol}`;
+        }
+
+        function getMonthYearString(offset) {
+            if (offset === 0) return 'Mês Atual';
+            const d = new Date();
+            d.setMonth(d.getMonth() + offset);
+            const monthName = d.toLocaleString('pt-PT', { month: 'long' });
+            return `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${d.getFullYear()}`;
         }
 
         const getTodayDate = () => {
@@ -2226,6 +2248,15 @@
             e.preventDefault();
             navigateTo('transactions');
         });
+
+        // Navigation Listeners for Month offsets
+        document.getElementById('budget-prev-month').addEventListener('click', () => { state.budgetMonthOffset--; renderBudgets(); });
+        document.getElementById('budget-next-month').addEventListener('click', () => { state.budgetMonthOffset++; renderBudgets(); });
+        document.getElementById('budget-reset-month').addEventListener('click', () => { state.budgetMonthOffset = 0; renderBudgets(); });
+
+        document.getElementById('analysis-prev-month').addEventListener('click', () => { state.analysisMonthOffset--; renderAnalysis(); });
+        document.getElementById('analysis-next-month').addEventListener('click', () => { state.analysisMonthOffset++; renderAnalysis(); });
+        document.getElementById('analysis-reset-month').addEventListener('click', () => { state.analysisMonthOffset = 0; renderAnalysis(); });
 
         // --- MOBILE NAVIGATION ---
         mobileMenuBtn.addEventListener('click', (e) => {
@@ -2820,6 +2851,11 @@
             const data = getUserData();
             const grid = document.getElementById('budgets-grid');
             grid.innerHTML = '';
+            
+            const refDate = new Date();
+            refDate.setMonth(refDate.getMonth() + state.budgetMonthOffset);
+            document.getElementById('budget-month-display').textContent = getMonthYearString(state.budgetMonthOffset);
+
             if (data.budgets.length === 0) {
                 grid.innerHTML = '<p style="grid-column: 1 / -1; text-align:center; color: var(--light-text-muted);">Nenhum orçamento definido. Crie um para controlar os seus gastos!</p>';
                 return;
@@ -2831,7 +2867,7 @@
                 let spent = 0;
                 data.transactions.forEach(t => {
                     const tDate = parseLocalDate(t.date); 
-                    if (t.type === 'despesa' && t.category === b.category && isDateInPeriod(tDate, b.period, b.customPeriodDays)) {
+                    if (t.type === 'despesa' && t.category === b.category && isDateInPeriod(tDate, b.period, b.customPeriodDays, refDate)) {
                         spent += t.amount;
                     }
                 });
@@ -2857,8 +2893,8 @@
             });
         }
 
-        function isDateInPeriod(tDate, period, customDays) {
-            const now = new Date();
+        function isDateInPeriod(tDate, period, customDays, refDate = new Date()) {
+            const now = new Date(refDate);
             now.setHours(0,0,0,0);
             tDate.setHours(0,0,0,0);
 
@@ -2958,6 +2994,10 @@
             const tooltipCallback = { plugins: { tooltip: { callbacks: { label: (context) => formatCurrency(context.raw) } } } };
             const now = new Date();
 
+            const refDate = new Date();
+            refDate.setMonth(refDate.getMonth() + state.analysisMonthOffset);
+            document.getElementById('analysis-month-display').textContent = getMonthYearString(state.analysisMonthOffset);
+
             // Moderna paleta para gráficos circulares
             const modernColors = isDarkMode ? 
                 ['#818CF8', '#34D399', '#FBBF24', '#F472B6', '#A78BFA', '#60A5FA'] :
@@ -2967,7 +3007,7 @@
             const expensesByCategory = {};
             data.transactions.forEach(t => {
                 const tDate = parseLocalDate(t.date);
-                if (t.type === 'despesa' && tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear()) {
+                if (t.type === 'despesa' && tDate.getMonth() === refDate.getMonth() && tDate.getFullYear() === refDate.getFullYear()) {
                     expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + t.amount;
                 }
             });
@@ -2987,7 +3027,7 @@
                     if (elements && elements.length > 0) {
                         const index = elements[0].index;
                         const label = chart.data.labels[index];
-                        openDrilldownModal(label, 'despesa', now.getMonth(), now.getFullYear());
+                        openDrilldownModal(label, 'despesa', refDate.getMonth(), refDate.getFullYear());
                     }
                 }
             });
@@ -2996,7 +3036,7 @@
             const incomeByCategory = {};
             data.transactions.forEach(t => {
                 const tDate = parseLocalDate(t.date);
-                if (t.type === 'receita' && tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear()) {
+                if (t.type === 'receita' && tDate.getMonth() === refDate.getMonth() && tDate.getFullYear() === refDate.getFullYear()) {
                     incomeByCategory[t.category] = (incomeByCategory[t.category] || 0) + t.amount;
                 }
             });
@@ -3015,7 +3055,7 @@
                     if (elements && elements.length > 0) {
                         const index = elements[0].index;
                         const label = chart.data.labels[index];
-                        openDrilldownModal(label, 'receita', now.getMonth(), now.getFullYear());
+                        openDrilldownModal(label, 'receita', refDate.getMonth(), refDate.getFullYear());
                     }
                 }
             });
