@@ -1576,6 +1576,19 @@
                     <button class="btn btn-secondary" id="budget-next-month" style="padding: 8px 12px;"><i class="fas fa-chevron-right"></i></button>
                     <button class="btn btn-primary" id="budget-reset-month" style="padding: 8px 12px;" title="Voltar ao Mês Atual"><i class="fas fa-calendar-day"></i> Hoje</button>
                 </div>
+                
+                <!-- Novo Resumo de Orçamentos -->
+                <div id="budget-summary-container" class="dashboard-grid hidden" style="margin-bottom: 24px;">
+                    <div class="summary-card" style="padding: 20px; border-top: 4px solid var(--primary-color);">
+                        <h3 style="font-size: 0.85rem; opacity: 0.8;">Total Orçamentado (Estimativa)</h3>
+                        <p class="amount" id="budget-total-estimated" style="font-size: 1.8rem; margin-top: 5px;">0,00 Kz</p>
+                    </div>
+                    <div class="summary-card" style="padding: 20px; border-top: 4px solid var(--danger-color);">
+                        <h3 style="font-size: 0.85rem; opacity: 0.8;">Total Gasto (Nestes Orçamentos)</h3>
+                        <p class="amount" id="budget-total-spent" style="font-size: 1.8rem; margin-top: 5px;">0,00 Kz</p>
+                    </div>
+                </div>
+
                 <div id="budgets-grid" class="item-grid">
                     <!-- Populated by JS -->
                 </div>
@@ -2011,10 +2024,25 @@
             return `${formatted} ${symbol}`;
         }
 
+        // Função utilitária nova para evitar que a troca de meses salte dias (Ex: 31 Ago -> saltar Setembro e ir para 1 Outubro)
+        function getOffsetDate(offset) {
+            const d = new Date();
+            if (offset === 0) return d;
+            
+            const currentDay = d.getDate();
+            d.setDate(1); // Prevenir salto de mês definindo para o dia 1
+            d.setMonth(d.getMonth() + offset);
+            
+            // Tenta restaurar o dia original se ele existir no novo mês
+            const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+            d.setDate(Math.min(currentDay, daysInMonth));
+            
+            return d;
+        }
+
         function getMonthYearString(offset) {
             if (offset === 0) return 'Mês Atual';
-            const d = new Date();
-            d.setMonth(d.getMonth() + offset);
+            const d = getOffsetDate(offset);
             const monthName = d.toLocaleString('pt-PT', { month: 'long' });
             return `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${d.getFullYear()}`;
         }
@@ -2850,27 +2878,37 @@
         function renderBudgets() {
             const data = getUserData();
             const grid = document.getElementById('budgets-grid');
+            const summaryContainer = document.getElementById('budget-summary-container');
             grid.innerHTML = '';
             
-            const refDate = new Date();
-            refDate.setMonth(refDate.getMonth() + state.budgetMonthOffset);
+            const refDate = getOffsetDate(state.budgetMonthOffset);
             document.getElementById('budget-month-display').textContent = getMonthYearString(state.budgetMonthOffset);
 
             if (data.budgets.length === 0) {
+                if(summaryContainer) summaryContainer.classList.add('hidden');
                 grid.innerHTML = '<p style="grid-column: 1 / -1; text-align:center; color: var(--light-text-muted);">Nenhum orçamento definido. Crie um para controlar os seus gastos!</p>';
                 return;
             }
             
+            if(summaryContainer) summaryContainer.classList.remove('hidden');
+            let totalBudgeted = 0;
+            let totalSpentInBudgets = 0;
             const now = new Date();
             
             data.budgets.forEach(b => {
                 let spent = 0;
                 data.transactions.forEach(t => {
                     const tDate = parseLocalDate(t.date); 
-                    if (t.type === 'despesa' && t.category === b.category && isDateInPeriod(tDate, b.period, b.customPeriodDays, refDate)) {
+                    // Permite que o orçamento englobe todas as categorias ou apenas uma específica
+                    const matchesCategory = (b.category === 'Todas as Categorias' || t.category === b.category);
+                    
+                    if (t.type === 'despesa' && matchesCategory && isDateInPeriod(tDate, b.period, b.customPeriodDays, refDate)) {
                         spent += t.amount;
                     }
                 });
+                
+                totalBudgeted += b.amount;
+                totalSpentInBudgets += spent;
                 
                 const progress = Math.min((spent / b.amount) * 100, 100);
                 let progressColor = 'var(--success-color)';
@@ -2891,31 +2929,50 @@
                     </div>
                 `;
             });
+            
+            if(document.getElementById('budget-total-estimated')) {
+                document.getElementById('budget-total-estimated').textContent = formatCurrency(totalBudgeted);
+            }
+            if(document.getElementById('budget-total-spent')) {
+                document.getElementById('budget-total-spent').textContent = formatCurrency(totalSpentInBudgets);
+            }
         }
 
         function isDateInPeriod(tDate, period, customDays, refDate = new Date()) {
             const now = new Date(refDate);
             now.setHours(0,0,0,0);
-            tDate.setHours(0,0,0,0);
+            
+            const target = new Date(tDate);
+            target.setHours(0,0,0,0);
 
             switch(period) {
                 case 'daily':
-                    return tDate.toDateString() === now.toDateString();
+                    return target.getTime() === now.getTime();
                 case 'weekly':
                     const startOfWeek = new Date(now);
-                    startOfWeek.setDate(now.getDate() - now.getDay()); 
+                    const day = startOfWeek.getDay();
+                    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Ajustar para que a semana comece à Segunda-feira
+                    startOfWeek.setDate(diff);
+                    startOfWeek.setHours(0,0,0,0);
+                    
                     const endOfWeek = new Date(startOfWeek);
                     endOfWeek.setDate(startOfWeek.getDate() + 6);
-                    return tDate >= startOfWeek && tDate <= endOfWeek;
+                    endOfWeek.setHours(23,59,59,999);
+                    
+                    return target >= startOfWeek && target <= endOfWeek;
                 case 'monthly':
-                    return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
+                    return target.getMonth() === now.getMonth() && target.getFullYear() === now.getFullYear();
                 case 'bimonthly':
-                    return Math.floor(tDate.getMonth() / 2) === Math.floor(now.getMonth() / 2) && tDate.getFullYear() === now.getFullYear();
+                    return Math.floor(target.getMonth() / 2) === Math.floor(now.getMonth() / 2) && target.getFullYear() === now.getFullYear();
                 case 'custom':
-                    const startDate = new Date(); 
-                    startDate.setDate(startDate.getDate() - (customDays - 1));
+                    const startDate = new Date(now);
+                    startDate.setDate(now.getDate() - (customDays - 1));
                     startDate.setHours(0,0,0,0);
-                    return tDate >= startDate && tDate <= now;
+                    
+                    const endDate = new Date(now);
+                    endDate.setHours(23,59,59,999);
+                    
+                    return target >= startDate && target <= endDate;
                 default:
                     return false;
             }
@@ -2994,8 +3051,7 @@
             const tooltipCallback = { plugins: { tooltip: { callbacks: { label: (context) => formatCurrency(context.raw) } } } };
             const now = new Date();
 
-            const refDate = new Date();
-            refDate.setMonth(refDate.getMonth() + state.analysisMonthOffset);
+            const refDate = getOffsetDate(state.analysisMonthOffset);
             document.getElementById('analysis-month-display').textContent = getMonthYearString(state.analysisMonthOffset);
 
             // Moderna paleta para gráficos circulares
@@ -3410,6 +3466,15 @@
             document.getElementById('budget-form').reset();
             document.getElementById('budget-modal-title').textContent = 'Criar Orçamento';
             populateCategorySelect('budget-category', 'despesa');
+            
+            // Adicionar opção de Orçamento Global
+            const select = document.getElementById('budget-category');
+            const globalOpt = document.createElement('option');
+            globalOpt.value = 'Todas as Categorias';
+            globalOpt.textContent = 'Todas as Categorias (Orçamento Global)';
+            select.insertBefore(globalOpt, select.firstChild);
+            select.value = 'Todas as Categorias';
+
             document.getElementById('custom-budget-category-group').classList.add('hidden');
             document.getElementById('budget-custom-category').required = false;
             document.getElementById('custom-budget-period-group').classList.add('hidden');
@@ -3758,6 +3823,13 @@
                     document.getElementById('budget-modal-title').textContent = 'Editar Orçamento';
                     document.getElementById('budget-id').value = item.id;
                     populateCategorySelect('budget-category', 'despesa');
+                    
+                    const selectBudget = document.getElementById('budget-category');
+                    const globalOptEdit = document.createElement('option');
+                    globalOptEdit.value = 'Todas as Categorias';
+                    globalOptEdit.textContent = 'Todas as Categorias (Orçamento Global)';
+                    selectBudget.insertBefore(globalOptEdit, selectBudget.firstChild);
+
                     document.getElementById('budget-category').value = item.category;
                     document.getElementById('budget-amount').value = item.amount;
                     document.getElementById('budget-period').value = item.period;
